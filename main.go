@@ -95,7 +95,16 @@ func routes(q *queue.Queue) http.Handler {
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(j)
 	})
-
+	
+	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
+		s, err := q.Stats(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(s)
+	})
 	return mux
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"time"
+	"math/rand"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -103,8 +104,8 @@ func (q *Queue) Retry(ctx context.Context, j Job, raw string) error {
 	}
 
 	backoff := time.Duration(1<<uint(j.Attempts)) * time.Second
-	runAt := time.Now().Add(backoff).Unix()
-
+	jitter := time.Duration(rand.Int63n(int64(backoff / 5)))
+	runAt := time.Now().Add(backoff - backoff/10 + jitter).Unix()
 	if err := q.rdb.ZAdd(ctx, DelayedKey, redis.Z{
 		Score:  float64(runAt),
 		Member: data,
@@ -140,4 +141,30 @@ func (q *Queue) PromoteDue(ctx context.Context) (int, error) {
 		count++
 	}
 	return count, nil
+}
+
+type Stats struct {
+	Pending    int64 `json:"pending"`
+	Processing int64 `json:"processing"`
+	Delayed    int64 `json:"delayed"`
+	Dead       int64 `json:"dead"`
+}
+
+func (q *Queue) Stats(ctx context.Context) (Stats, error) {
+	var s Stats
+	var err error
+
+	if s.Pending, err = q.rdb.LLen(ctx, QueueKey).Result(); err != nil {
+		return s, err
+	}
+	if s.Processing, err = q.rdb.LLen(ctx, ProcessingKey).Result(); err != nil {
+		return s, err
+	}
+	if s.Delayed, err = q.rdb.ZCard(ctx, DelayedKey).Result(); err != nil {
+		return s, err
+	}
+	if s.Dead, err = q.rdb.LLen(ctx, DeadKey).Result(); err != nil {
+		return s, err
+	}
+	return s, nil
 }
