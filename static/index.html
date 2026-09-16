@@ -8,19 +8,31 @@
     .grid { display: flex; gap: 1rem; margin-top: 1.5rem; }
     .card { background: #1c1c1f; border-radius: 8px; padding: 1.25rem 2rem; min-width: 120px; }
     .label { font-size: 0.75rem; text-transform: uppercase; color: #888; letter-spacing: 0.05em; }
+
+    /* Tabular figures keep the digits a fixed width, so a counter ticking
+       from 9 to 10 doesn't shift the card's layout. */
     .value { font-size: 2.5rem; font-variant-numeric: tabular-nums; margin-top: 0.25rem; }
+
+    /* Dead is the only counter that should never move in a healthy run. */
     .dead .value { color: #e5484d; }
   </style>
 </head>
 <body>
   <h1>Task Queue</h1>
+
+  <!-- One card per Redis key: pending, processing, delayed, dead. The ids
+       match the JSON field names from GET /stats so the poll loop can map
+       between them without a lookup table. -->
   <div class="grid">
     <div class="card"><div class="label">Pending</div><div class="value" id="pending">–</div></div>
     <div class="card"><div class="label">Processing</div><div class="value" id="processing">–</div></div>
     <div class="card"><div class="label">Delayed</div><div class="value" id="delayed">–</div></div>
     <div class="card dead"><div class="label">Dead</div><div class="value" id="dead">–</div></div>
   </div>
+
   <script>
+    // Polling rather than websockets: the numbers only need to be roughly
+    // current, and a one-second GET against four Redis counters is cheap.
     async function poll() {
       try {
         const res = await fetch('/stats');
@@ -29,9 +41,14 @@
           document.getElementById(k).textContent = s[k];
         }
       } catch (e) {
+        // Leave the last known values on screen. A failed poll is usually the
+        // server restarting, and blanking the cards would be noisier than
+        // showing slightly stale numbers.
         console.error(e);
       }
     }
+
+    // Once immediately so the dashes are replaced on load, then on an interval.
     poll();
     setInterval(poll, 1000);
   </script>
