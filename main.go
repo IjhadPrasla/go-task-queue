@@ -140,8 +140,11 @@ func worker(ctx context.Context, id int, q *queue.Queue) {
 		log.Printf("worker %d: processing %s (type=%s)", id, job.ID, job.Type)
 		if err := process(job); err != nil {
 			log.Printf("worker %d: job %s failed (attempt %d): %v", id, job.ID, job.Attempts+1, err)
-			if rerr := q.Retry(ctx, *job, raw); rerr != nil {
+			dead, rerr := q.Retry(ctx, *job, raw)
+			if rerr != nil {
 				log.Printf("worker %d: retry failed: %v", id, rerr)
+			} else if dead {
+				log.Printf("worker %d: job %s exhausted retries, moved to dead letter", id, job.ID)
 			}
 			continue
 		}

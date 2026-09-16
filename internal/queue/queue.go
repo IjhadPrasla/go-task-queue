@@ -3,9 +3,9 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"math/rand"
 	"strconv"
 	"time"
-	"math/rand"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -88,19 +88,19 @@ func (q *Queue) Recover(ctx context.Context) (int, error) {
 	}
 }
 
-func (q *Queue) Retry(ctx context.Context, j Job, raw string) error {
+func (q *Queue) Retry(ctx context.Context, j Job, raw string) (dead bool, err error) {
 	j.Attempts++
 
 	data, err := json.Marshal(j)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if j.Attempts >= MaxAttempts {
 		if err := q.rdb.LPush(ctx, DeadKey, data).Err(); err != nil {
-			return err
+			return false, err
 		}
-		return q.Ack(ctx, raw)
+		return true, q.Ack(ctx, raw)
 	}
 
 	backoff := time.Duration(1<<uint(j.Attempts)) * time.Second
@@ -110,9 +110,9 @@ func (q *Queue) Retry(ctx context.Context, j Job, raw string) error {
 		Score:  float64(runAt),
 		Member: data,
 	}).Err(); err != nil {
-		return err
+		return false, err
 	}
-	return q.Ack(ctx, raw)
+	return false, q.Ack(ctx, raw)
 }
 
 func (q *Queue) PromoteDue(ctx context.Context) (int, error) {

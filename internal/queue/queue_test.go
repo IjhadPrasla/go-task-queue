@@ -73,8 +73,12 @@ func TestRetryIncrementsAttempts(t *testing.T) {
 		t.Fatalf("dequeue: %v", err)
 	}
 
-	if err := q.Retry(ctx, *got, raw); err != nil {
+	dead, err := q.Retry(ctx, *got, raw)
+	if err != nil {
 		t.Fatalf("retry: %v", err)
+	}
+	if dead {
+		t.Error("job reported dead before exhausting attempts")
 	}
 
 	n, err := q.rdb.ZCard(ctx, DelayedKey).Result()
@@ -107,16 +111,20 @@ func TestRetryExhaustedGoesToDeadLetter(t *testing.T) {
 		t.Fatalf("dequeue: %v", err)
 	}
 
-	if err := q.Retry(ctx, *got, raw); err != nil {
+	dead, err := q.Retry(ctx, *got, raw)
+	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
+	if !dead {
+		t.Error("exhausted job not reported as dead")
+	}
 
-	dead, err := q.rdb.LLen(ctx, DeadKey).Result()
+	deadCount, err := q.rdb.LLen(ctx, DeadKey).Result()
 	if err != nil {
 		t.Fatalf("llen dead: %v", err)
 	}
-	if dead != 1 {
-		t.Errorf("expected 1 dead job, got %d", dead)
+	if deadCount != 1 {
+		t.Errorf("expected 1 dead job, got %d", deadCount)
 	}
 
 	delayed, err := q.rdb.ZCard(ctx, DelayedKey).Result()
