@@ -30,7 +30,15 @@ type Queue struct {
 }
 
 func New(addr string) *Queue {
-	return &Queue{rdb: redis.NewClient(&redis.Options{Addr: addr})}
+	return NewWithDB(addr, 0)
+}
+
+func NewWithDB(addr string, db int) *Queue {
+	return &Queue{rdb: redis.NewClient(&redis.Options{Addr: addr, DB: db})}
+}
+
+func (q *Queue) FlushDB(ctx context.Context) error {
+	return q.rdb.FlushDB(ctx).Err()
 }
 
 func (q *Queue) Ping(ctx context.Context) error {
