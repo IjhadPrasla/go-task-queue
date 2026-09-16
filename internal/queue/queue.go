@@ -11,6 +11,8 @@ import (
 const (
 	QueueKey      = "jobs:pending"
 	ProcessingKey = "jobs:processing"
+	DeadKey       = "jobs:dead"
+	MaxAttempts   = 3
 )
 
 type Job struct {
@@ -73,4 +75,31 @@ func (q *Queue) Recover(ctx context.Context) (int, error) {
 		}
 		count++
 	}
+}
+
+func (q *Queue) Retry(ctx context.Context, j Job, raw string) error {
+	j.Attempts++
+
+	if j.Attempts >= MaxAttempts {
+		data, err := json.Marshal(j)
+		if err != nil {
+			return err
+		}
+		if err := q.rdb.LPush(ctx, DeadKey, data).Err(); err != nil {
+			return err
+		}
+		return q.Ack(ctx, raw)
+	}
+
+	backoff := time.Duration(1<<uint(j.Attempts)) * time.Second
+	time.Sleep(backoff)
+
+	data, err := json.Marshal(j)
+	if err != nil {
+		return err
+	}
+	if err := q.rdb.LPush(ctx, QueueKey, data).Err(); err != nil {
+		return err
+	}
+	return q.Ack(ctx, raw)
 }
