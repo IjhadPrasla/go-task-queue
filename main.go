@@ -25,6 +25,12 @@ func main() {
 		log.Fatalf("redis unreachable: %v", err)
 	}
 	log.Println("connected to redis")
+	recovered, err := q.Recover(ctx)
+	if err != nil {
+		log.Printf("recovery failed: %v", err)
+	} else if recovered > 0 {
+		log.Printf("recovered %d orphaned jobs", recovered)
+	}
 
 	var wg sync.WaitGroup
 	for i := 1; i <= numWorkers; i++ {
@@ -94,7 +100,7 @@ func worker(ctx context.Context, id int, q *queue.Queue) {
 		default:
 		}
 
-		job, err := q.Dequeue(ctx, 2*time.Second)
+		job, raw, err := q.Dequeue(ctx, 2*time.Second)
 		if err != nil {
 			if ctx.Err() != nil {
 				log.Printf("worker %d: stopping", id)
@@ -110,6 +116,9 @@ func worker(ctx context.Context, id int, q *queue.Queue) {
 
 		log.Printf("worker %d: processing %s (type=%s)", id, job.ID, job.Type)
 		process(job)
+		if err := q.Ack(ctx, raw); err != nil {
+			log.Printf("worker %d: ack failed: %v", id, err)
+		}
 		log.Printf("worker %d: done %s", id, job.ID)
 	}
 }
