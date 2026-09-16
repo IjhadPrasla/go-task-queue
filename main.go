@@ -43,6 +43,12 @@ func main() {
 		}(i)
 	}
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scheduler(ctx, q)
+	}()
+
 	srv := &http.Server{Addr: ":8080", Handler: routes(q)}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -137,4 +143,28 @@ func process(j *queue.Job) error {
 		return fmt.Errorf("simulated failure")
 	}
 	return nil
+}
+
+func scheduler(ctx context.Context, q *queue.Queue) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("scheduler: stopping")
+			return
+		case <-ticker.C:
+			n, err := q.PromoteDue(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Printf("scheduler: promote failed: %v", err)
+				}
+				continue
+			}
+			if n > 0 {
+				log.Printf("scheduler: promoted %d delayed jobs", n)
+			}
+		}
+	}
 }

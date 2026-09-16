@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,6 +14,7 @@ const (
 	ProcessingKey = "jobs:processing"
 	DeadKey       = "jobs:dead"
 	MaxAttempts   = 3
+	DelayedKey    = "jobs:delayed"
 )
 
 type Job struct {
@@ -80,11 +82,12 @@ func (q *Queue) Recover(ctx context.Context) (int, error) {
 func (q *Queue) Retry(ctx context.Context, j Job, raw string) error {
 	j.Attempts++
 
+	data, err := json.Marshal(j)
+	if err != nil {
+		return err
+	}
+
 	if j.Attempts >= MaxAttempts {
-		data, err := json.Marshal(j)
-		if err != nil {
-			return err
-		}
 		if err := q.rdb.LPush(ctx, DeadKey, data).Err(); err != nil {
 			return err
 		}
@@ -92,14 +95,41 @@ func (q *Queue) Retry(ctx context.Context, j Job, raw string) error {
 	}
 
 	backoff := time.Duration(1<<uint(j.Attempts)) * time.Second
-	time.Sleep(backoff)
+	runAt := time.Now().Add(backoff).Unix()
 
-	data, err := json.Marshal(j)
-	if err != nil {
-		return err
-	}
-	if err := q.rdb.LPush(ctx, QueueKey, data).Err(); err != nil {
+	if err := q.rdb.ZAdd(ctx, DelayedKey, redis.Z{
+		Score:  float64(runAt),
+		Member: data,
+	}).Err(); err != nil {
 		return err
 	}
 	return q.Ack(ctx, raw)
+}
+
+func (q *Queue) PromoteDue(ctx context.Context) (int, error) {
+	now := float64(time.Now().Unix())
+
+	members, err := q.rdb.ZRangeByScore(ctx, DelayedKey, &redis.ZRangeBy{
+		Min: "-inf",
+		Max: strconv.FormatFloat(now, 'f', 0, 64),
+	}).Result()
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, m := range members {
+		removed, err := q.rdb.ZRem(ctx, DelayedKey, m).Result()
+		if err != nil {
+			return count, err
+		}
+		if removed == 0 {
+			continue
+		}
+		if err := q.rdb.LPush(ctx, QueueKey, m).Err(); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }
