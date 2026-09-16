@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"os"
 
 	"github.com/IjhadPrasla/go-task-queue/internal/queue"
 	"github.com/google/uuid"
@@ -22,7 +23,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	q := queue.New("localhost:6379")
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	q := queue.New(redisAddr)
 	if err := q.Ping(ctx); err != nil {
 		log.Fatalf("redis unreachable: %v", err)
 	}
