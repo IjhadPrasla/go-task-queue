@@ -8,6 +8,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// testQueue returns a Queue pointed at Redis database 15 and flushes it, so
+// each test starts clean without touching database 0 where the app lives.
+//
+// If Redis is not running the test skips rather than fails: these are
+// integration tests and an absent dependency is not a code defect. Note that
+// skipped tests still report "ok" in the summary line, so read the per-test
+// SKIP/PASS lines when checking a run.
 func testQueue(t *testing.T) *Queue {
 	t.Helper()
 
@@ -23,6 +30,8 @@ func testQueue(t *testing.T) *Queue {
 	return q
 }
 
+// TestEnqueueDequeue covers the round trip: a job survives marshalling into
+// Redis and back, and Dequeue returns the raw string Ack will need later.
 func TestEnqueueDequeue(t *testing.T) {
 	q := testQueue(t)
 	ctx := context.Background()
@@ -47,6 +56,8 @@ func TestEnqueueDequeue(t *testing.T) {
 	}
 }
 
+// TestDequeueEmptyReturnsNil pins down the timeout contract: an empty queue is
+// a nil job and a nil error, not redis.Nil leaking out to the worker loop.
 func TestDequeueEmptyReturnsNil(t *testing.T) {
 	q := testQueue(t)
 	ctx := context.Background()
@@ -60,6 +71,8 @@ func TestDequeueEmptyReturnsNil(t *testing.T) {
 	}
 }
 
+// TestRetryIncrementsAttempts covers the non-fatal retry branch: the job is
+// reported alive, lands in the delayed set, and is released from processing.
 func TestRetryIncrementsAttempts(t *testing.T) {
 	q := testQueue(t)
 	ctx := context.Background()
@@ -89,6 +102,7 @@ func TestRetryIncrementsAttempts(t *testing.T) {
 		t.Errorf("expected 1 delayed job, got %d", n)
 	}
 
+	// The retry must have acked, or the job would be counted twice.
 	pending, err := q.rdb.LLen(ctx, ProcessingKey).Result()
 	if err != nil {
 		t.Fatalf("llen: %v", err)
@@ -98,6 +112,9 @@ func TestRetryIncrementsAttempts(t *testing.T) {
 	}
 }
 
+// TestRetryExhaustedGoesToDeadLetter covers the fatal branch. Seeding with
+// MaxAttempts-1 means one more failure kills the job whatever MaxAttempts is
+// set to, so the test does not hardcode the limit.
 func TestRetryExhaustedGoesToDeadLetter(t *testing.T) {
 	q := testQueue(t)
 	ctx := context.Background()
@@ -127,6 +144,7 @@ func TestRetryExhaustedGoesToDeadLetter(t *testing.T) {
 		t.Errorf("expected 1 dead job, got %d", deadCount)
 	}
 
+	// A dead job must not also be scheduled for another run.
 	delayed, err := q.rdb.ZCard(ctx, DelayedKey).Result()
 	if err != nil {
 		t.Fatalf("zcard: %v", err)
@@ -136,6 +154,11 @@ func TestRetryExhaustedGoesToDeadLetter(t *testing.T) {
 	}
 }
 
+// TestPromoteDueOnlyPromotesReadyJobs checks the scheduler's filtering: a job
+// scored in the past is promoted, one scored in the future is left alone.
+//
+// The members are arbitrary strings rather than real jobs because PromoteDue
+// moves opaque values between keys and never decodes them.
 func TestPromoteDueOnlyPromotesReadyJobs(t *testing.T) {
 	q := testQueue(t)
 	ctx := context.Background()
