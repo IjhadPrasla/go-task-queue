@@ -7,11 +7,11 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
-	"os"
 
 	"github.com/IjhadPrasla/go-task-queue/internal/queue"
 	"github.com/google/uuid"
@@ -54,13 +54,17 @@ func main() {
 		scheduler(ctx, q)
 	}()
 
-	srv := &http.Server{Addr: ":8080", Handler: routes(q)}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	srv := &http.Server{Addr: ":" + port, Handler: routes(q)}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
-	log.Println("listening on :8080")
+	log.Printf("listening on :%s", port)
 
 	<-ctx.Done()
 	log.Println("shutdown signal received")
